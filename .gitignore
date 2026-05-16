@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local run artifacts
+runs/
+savepoints/
+*.log
+*_chunks/
+outputs/
+
+# User-owned local voice samples
+samples/*
+!samples/README.md
+!samples/.gitkeep
+
+# Local screenshot source files
+screencaps/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
