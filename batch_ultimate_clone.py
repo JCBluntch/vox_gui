@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import List
 
@@ -128,10 +129,25 @@ def save_audio(wav, sr: int, output: Path, speed: float):
         try:
             subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
         finally:
-            if tmp_path.exists():
-                tmp_path.unlink()
+            _safe_unlink(tmp_path)
     else:
         sf.write(str(output), wav, sr)
+
+
+def _safe_unlink(path: Path, attempts: int = 10, delay: float = 0.25):
+    """Remove temporary files without letting a brief Windows file lock abort the run."""
+    for attempt in range(attempts):
+        try:
+            path.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if attempt < attempts - 1:
+                time.sleep(delay)
+                continue
+            print(f"Warning: could not remove temporary file because it is still in use: {path}", file=sys.stderr)
+            return
 
 
 def stitch_outputs(audio_paths: List[Path], out_dir: Path, output_path: Path, output_format: str, gap_ms: int):

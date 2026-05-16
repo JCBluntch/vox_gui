@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.0.3
+
+- Prevent brief Windows temp-file locks from aborting a successful generation run during temporary WAV cleanup.
+- Treat names such as `Inceptal Overview v2 05.2026` as filenames that still need the selected audio extension, so auto-stitching writes `Inceptal Overview v2 05.2026.mp3` instead of failing on a date-like suffix.
+
 ## v1.0.2
 
 - Move automatic post-generation stitching into the batch generation job so it no longer depends on the browser session staying connected for the full run.

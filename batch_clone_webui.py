@@ -311,6 +311,7 @@ def _read_tail(path: Path, max_chars=20000):
 def _resolve_stitched_target(out_dir: Path, stitched_output: str, output_format: str) -> Path:
     out_name = (stitched_output or "").strip()
     ext = (output_format or "mp3").strip().lower()
+    known_audio_suffixes = {".wav", ".mp3", ".ogg", ".m4a"}
     if out_name:
         target = Path(out_name)
         if not target.is_absolute():
@@ -318,8 +319,9 @@ def _resolve_stitched_target(out_dir: Path, stitched_output: str, output_format:
     else:
         target = out_dir / f"master.{ext}"
 
-    if target.suffix == "":
-        target = target.with_suffix(f".{ext}")
+    # Names like "overview 05.2026" should keep the date text and still get an audio extension.
+    if target.suffix.lower() not in known_audio_suffixes:
+        target = target.with_name(f"{target.name}.{ext}")
     return target.resolve()
 
 
