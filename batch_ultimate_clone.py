@@ -23,6 +23,8 @@ from typing import List
 import soundfile as sf
 from voxcpm import VoxCPM
 
+CONCAT_SCRIPT = Path(__file__).with_name("concat_audio_chunks.py")
+
 
 def natural_key(path: Path):
     name = path.stem
@@ -132,6 +134,50 @@ def save_audio(wav, sr: int, output: Path, speed: float):
         sf.write(str(output), wav, sr)
 
 
+def stitch_outputs(audio_paths: List[Path], out_dir: Path, output_path: Path, output_format: str, gap_ms: int):
+    if not audio_paths:
+        raise ValueError("No generated audio files are available to stitch.")
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".txt",
+        delete=False,
+        encoding="utf-8",
+        newline="\n",
+    ) as manifest:
+        manifest_path = Path(manifest.name)
+        manifest.write("\n".join(str(path.resolve()) for path in audio_paths))
+
+    pattern = f"*.{output_format}"
+    cmd = [
+        sys.executable,
+        str(CONCAT_SCRIPT),
+        "--input-dir",
+        str(out_dir),
+        "--output",
+        str(output_path),
+        "--pattern",
+        pattern,
+        "--gap-ms",
+        str(int(gap_ms)),
+        "--manifest",
+        str(manifest_path),
+    ]
+
+    try:
+        print("Auto-stitching generated files...")
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.stdout:
+            print(proc.stdout, end="" if proc.stdout.endswith("\n") else "\n")
+        if proc.stderr:
+            print(proc.stderr, end="" if proc.stderr.endswith("\n") else "\n", file=sys.stderr)
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, cmd)
+    finally:
+        if manifest_path.exists():
+            manifest_path.unlink()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Batch cloning for VoxCPM2")
     parser.add_argument("--ref", required=True, help="Reference voice audio path")
@@ -153,6 +199,8 @@ def main():
     parser.add_argument("--speed", type=float, default=1.0, help="Playback speed (1.0 normal)")
     parser.add_argument("--cfg", type=float, default=2.0, help="Classifier-free guidance")
     parser.add_argument("--steps", type=int, default=10, help="Inference timesteps")
+    parser.add_argument("--auto-stitch-output", help="Optional stitched output file to create after generation completes")
+    parser.add_argument("--stitch-gap-ms", type=int, default=120, help="Gap between stitched chunks when auto-stitching")
     parser.add_argument("--dry-run", action="store_true", help="Plan only, do not generate audio")
     args = parser.parse_args()
 
@@ -236,6 +284,15 @@ def main():
         wav = model.generate(**kwargs)
         save_audio(wav, model.tts_model.sample_rate, out_path, speed=args.speed)
         print(f"Saved: {out_path}")
+
+    if args.auto_stitch_output:
+        stitch_outputs(
+            audio_paths=[out_path for _, _, out_path, _ in plan_rows],
+            out_dir=out_dir,
+            output_path=Path(args.auto_stitch_output).resolve(),
+            output_format=args.format,
+            gap_ms=args.stitch_gap_ms,
+        )
 
     print("Done.")
 

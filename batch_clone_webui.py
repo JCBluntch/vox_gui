@@ -426,6 +426,15 @@ def _run_stream(
             steps=steps,
             dry_run=dry_run,
         )
+        auto_stitched_target = None
+        if (not dry_run) and auto_stitch:
+            auto_stitched_target = _resolve_stitched_target(out_dir, stitched_output_name, fmt)
+            cmd += [
+                "--auto-stitch-output",
+                str(auto_stitched_target),
+                "--stitch-gap-ms",
+                str(int(stitch_gap_ms)),
+            ]
 
         log_path = run_root / "run.log"
         expected_paths = _expected_audio_paths(chunk_dir, out_dir, fmt)
@@ -484,17 +493,17 @@ def _run_stream(
         stitch_logs = ""
         stitch_btn = gr.update(interactive=False)
 
-        if (not dry_run) and proc.returncode == 0 and auto_stitch:
-            stitched_target = _resolve_stitched_target(out_dir, stitched_output_name, fmt)
-            manifest_path = _write_stitch_manifest(run_root, [Path(path) for path in final_files])
-            stitch_summary, stitch_logs, stitch_rc = _run_stitch_process(
-                out_dir=out_dir,
-                stitched_target=stitched_target,
-                stitch_gap_ms=int(stitch_gap_ms),
-                output_format=fmt,
-                manifest_path=manifest_path,
+        if (not dry_run) and auto_stitch:
+            stitch_ok = bool(auto_stitched_target and auto_stitched_target.exists() and proc.returncode == 0)
+            stitch_status = "Completed" if stitch_ok else "Failed"
+            final_summary += f"\nAuto-Stitch: {stitch_status}"
+            stitch_summary = (
+                f"Status: Stitch {stitch_status}\n"
+                f"Output File: {auto_stitched_target}\n"
+                f"Gap (ms): {int(stitch_gap_ms)}\n"
+                "Mode: Auto-stitch ran inside the generation job."
             )
-            final_summary += f"\nAuto-Stitch: {'Completed' if stitch_rc == 0 else 'Failed'}"
+            stitch_logs = "Auto-stitch details are included in the main run log above."
             stitch_btn = gr.update(interactive=False)
         elif (not dry_run) and proc.returncode == 0 and (not auto_stitch):
             stitch_summary = "Auto-stitch disabled. Click 'Stitch Now' to stitch with current settings."
