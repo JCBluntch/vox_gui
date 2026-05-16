@@ -1,5 +1,6 @@
 ﻿import datetime as dt
 import os
+import re
 import subprocess
 import sys
 import time
@@ -285,6 +286,21 @@ def _collect_audio_files(out_dir: Path):
     return [str(p) for p in sorted(files, key=lambda x: x.name.lower())]
 
 
+def _natural_key(path: Path):
+    parts = re.split(r"(\d+)", path.stem.lower())
+    return [int(part) if part.isdigit() else part for part in parts]
+
+
+def _expected_audio_paths(chunk_dir: Path, out_dir: Path, output_format: str):
+    ext = f".{(output_format or 'mp3').strip().lower()}"
+    chunks = sorted([p for p in chunk_dir.glob("*.txt") if p.is_file()], key=_natural_key)
+    return [out_dir / f"{chunk.stem}{ext}" for chunk in chunks]
+
+
+def _collect_expected_audio_files(expected_paths):
+    return [str(path) for path in expected_paths if path.exists()]
+
+
 def _read_tail(path: Path, max_chars=20000):
     if not path.exists():
         return ""
@@ -307,7 +323,13 @@ def _resolve_stitched_target(out_dir: Path, stitched_output: str, output_format:
     return target.resolve()
 
 
-def _run_stitch_process(out_dir: Path, stitched_target: Path, stitch_gap_ms: int, output_format: str):
+def _write_stitch_manifest(run_root: Path, audio_paths):
+    manifest_path = run_root / "stitch_manifest.txt"
+    manifest_path.write_text("\n".join(str(path) for path in audio_paths), encoding="utf-8")
+    return manifest_path
+
+
+def _run_stitch_process(out_dir: Path, stitched_target: Path, stitch_gap_ms: int, output_format: str, manifest_path: Path | None = None):
     pattern = f"*.{(output_format or 'mp3').strip().lower()}"
     cmd = [
         sys.executable,
@@ -321,6 +343,8 @@ def _run_stitch_process(out_dir: Path, stitched_target: Path, stitch_gap_ms: int
         "--gap-ms",
         str(int(stitch_gap_ms)),
     ]
+    if manifest_path:
+        cmd += ["--manifest", str(manifest_path)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     logs = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
     status = "Stitch Completed" if proc.returncode == 0 else "Stitch Failed"
@@ -329,6 +353,7 @@ def _run_stitch_process(out_dir: Path, stitched_target: Path, stitch_gap_ms: int
         f"Input Folder: {out_dir}\n"
         f"Output File: {stitched_target}\n"
         f"Pattern: {pattern}\n"
+        f"Manifest: {manifest_path or 'Not used'}\n"
         f"Gap (ms): {int(stitch_gap_ms)}\n"
         f"Exit Code: {proc.returncode}\n"
         f"Command: {' '.join(cmd)}"
@@ -336,13 +361,22 @@ def _run_stitch_process(out_dir: Path, stitched_target: Path, stitch_gap_ms: int
     return summary, logs, proc.returncode
 
 
-def run_stitch(output_dir, stitched_output, stitch_gap_ms, output_format):
+def run_stitch(output_dir, resolved_chunks, run_name, runs_root, stitched_output, stitch_gap_ms, output_format):
     try:
         out_dir = Path((output_dir or "").strip()).resolve()
         if not out_dir.exists():
             return "Status: Error\nResolved Output Folder does not exist.", ""
+        chunk_dir = Path((resolved_chunks or "").strip()).resolve()
+        if not chunk_dir.exists():
+            return "Status: Error\nResolved Chunks Folder does not exist.", ""
+        expected_paths = _expected_audio_paths(chunk_dir, out_dir, output_format)
+        missing = [path.name for path in expected_paths if not path.exists()]
+        if missing:
+            return f"Status: Error\nMissing expected generated files: {', '.join(missing)}", ""
+        run_root = Path((runs_root or "").strip() or str(DEFAULT_RUNS_ROOT)).resolve() / ((run_name or "").strip() or _timestamp_name())
+        manifest_path = _write_stitch_manifest(run_root, expected_paths)
         stitched_target = _resolve_stitched_target(out_dir, stitched_output, output_format)
-        return _run_stitch_process(out_dir, stitched_target, int(stitch_gap_ms), output_format)[:2]
+        return _run_stitch_process(out_dir, stitched_target, int(stitch_gap_ms), output_format, manifest_path)[:2]
     except Exception as e:
         return f"Status: Error\n{e}", ""
 
@@ -394,6 +428,8 @@ def _run_stream(
         )
 
         log_path = run_root / "run.log"
+        expected_paths = _expected_audio_paths(chunk_dir, out_dir, fmt)
+        existing_conflicts = sorted(path.name for path in expected_paths if path.exists())
         start = time.time()
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
@@ -405,7 +441,7 @@ def _run_stream(
             rc = proc.poll()
             elapsed = int(time.time() - start)
             logs = _read_tail(log_path)
-            files = [] if dry_run else _collect_audio_files(out_dir)
+            files = [] if dry_run else _collect_expected_audio_files(expected_paths)
             status = "Dry Run In Progress" if dry_run else "Generation In Progress"
             summary = (
                 f"Status: {status}\n"
@@ -415,6 +451,8 @@ def _run_stream(
                 f"Chunks Folder: {chunk_dir}\n"
                 f"Output Folder: {out_dir}\n"
                 f"Generated Files So Far: {len(files)}\n"
+                f"Expected Files This Run: {len(expected_paths)}\n"
+                f"Pre-existing Matching Files: {', '.join(existing_conflicts) if existing_conflicts else 'None'}\n"
                 f"Log File: {log_path}\n"
                 f"Command: {' '.join(cmd)}"
             )
@@ -424,7 +462,7 @@ def _run_stream(
             time.sleep(2)
 
         final_logs = _read_tail(log_path, max_chars=50000)
-        final_files = [] if dry_run else _collect_audio_files(out_dir)
+        final_files = [] if dry_run else _collect_expected_audio_files(expected_paths)
         final_status = "Dry Run Completed" if (dry_run and proc.returncode == 0) else (
             "Generation Completed" if proc.returncode == 0 else "Failed"
         )
@@ -436,6 +474,8 @@ def _run_stream(
             f"Chunks Folder: {chunk_dir}\n"
             f"Output Folder: {out_dir}\n"
             f"Generated Files: {len(final_files)}\n"
+            f"Expected Files This Run: {len(expected_paths)}\n"
+            f"Pre-existing Matching Files: {', '.join(existing_conflicts) if existing_conflicts else 'None'}\n"
             f"Exit Code: {proc.returncode}\n"
             f"Log File: {log_path}\n"
             f"Command: {' '.join(cmd)}"
@@ -446,11 +486,13 @@ def _run_stream(
 
         if (not dry_run) and proc.returncode == 0 and auto_stitch:
             stitched_target = _resolve_stitched_target(out_dir, stitched_output_name, fmt)
+            manifest_path = _write_stitch_manifest(run_root, [Path(path) for path in final_files])
             stitch_summary, stitch_logs, stitch_rc = _run_stitch_process(
                 out_dir=out_dir,
                 stitched_target=stitched_target,
                 stitch_gap_ms=int(stitch_gap_ms),
                 output_format=fmt,
+                manifest_path=manifest_path,
             )
             final_summary += f"\nAuto-Stitch: {'Completed' if stitch_rc == 0 else 'Failed'}"
             stitch_btn = gr.update(interactive=False)
@@ -760,7 +802,7 @@ def build_ui():
         )
         stitch_btn.click(
             fn=run_stitch,
-            inputs=[resolved_output, stitched_output_name, stitch_gap_ms, fmt],
+            inputs=[resolved_output, resolved_chunks, run_name, runs_root, stitched_output_name, stitch_gap_ms, fmt],
             outputs=[stitch_summary, stitch_logs],
         )
 

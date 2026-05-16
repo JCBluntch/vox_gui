@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.0.1
+
+- Count only the files expected for the current run instead of every audio file already present in the output folder.
+- Show the expected file count and any pre-existing matching filenames in run summaries.
+- Stitch from an exact current-run manifest so stale audio files in reused output folders are not included accidentally.
+- Allow intentionally skipped chunk numbers, such as a removed `overview 13.txt`, without treating the numbering gap as an error.
+
 ## v1.0
 
 - Initial public release.

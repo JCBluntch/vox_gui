@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--input-dir", required=True, help="Folder containing chunk audio files")
     parser.add_argument("--output", required=True, help="Output file path (.wav, .mp3, .ogg, .m4a)")
     parser.add_argument("--pattern", default="*.mp3", help="Glob pattern for chunk files (default: *.mp3)")
+    parser.add_argument("--manifest", help="Optional text file listing exact audio files to stitch, one path per line")
     parser.add_argument("--gap-ms", type=int, default=120, help="Silence gap inserted between chunks (ms)")
     parser.add_argument("--sample-rate", type=int, default=48000, help="Target sample rate")
     args = parser.parse_args()
@@ -40,7 +41,16 @@ def main():
     if not in_dir.exists():
         raise FileNotFoundError(f"Input dir not found: {in_dir}")
 
-    files = sorted([p for p in in_dir.glob(args.pattern) if p.is_file()], key=natural_key)
+    if args.manifest:
+        manifest_path = Path(args.manifest).resolve()
+        if not manifest_path.exists():
+            raise FileNotFoundError(f"Manifest not found: {manifest_path}")
+        files = [Path(line.strip()).resolve() for line in manifest_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        missing = [str(path) for path in files if not path.exists()]
+        if missing:
+            raise FileNotFoundError(f"Manifest contains missing file(s): {', '.join(missing)}")
+    else:
+        files = sorted([p for p in in_dir.glob(args.pattern) if p.is_file()], key=natural_key)
     if not files:
         raise FileNotFoundError(f"No files found in {in_dir} matching pattern {args.pattern}")
 
@@ -80,4 +90,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
